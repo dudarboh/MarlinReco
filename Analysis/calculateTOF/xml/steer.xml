@@ -1,0 +1,32 @@
+<marlin>
+    <constants></constants>
+
+    <global>
+		<parameter name="LCIOInputFiles">
+            /pnfs/desy.de/ilc/prod/ilc/mc-opt-3/ild/rec/500-TDR_ws/2f_Z_hadronic/ILD_l5_o1_v02/v02-00-01/00010410/000/rv02-00-01.sv02-00-01.mILD_l5_o1_v02.E500-TDR_ws.I250114.P2f_z_h.eL.pR.n001_001.d_rec_00010410_131.slcio
+        </parameter>
+		<parameter name="MaxRecordNumber" value="0" />
+        <parameter name="SupressCheck" value="false" />
+		<parameter name="AllowToModifyEvent" value="true" />
+	</global>
+
+
+	<execute>
+        <processor name="InitDD4hep" />
+        <processor name="MycalculateTOF"/>
+	</execute>
+
+
+    <processor name="InitDD4hep" type="InitializeDD4hep">
+        <!--InitializeDD4hep reads a compact xml file and initializes the DD4hep::LCDD object-->
+        <parameter name="DD4hepXMLFile" type="string">
+            /cvmfs/ilc.desy.de/sw/x86_64_gcc82_centos7/v02-02/lcgeo/v00-16-06/ILD/compact/ILD_l5_o1_v02/ILD_l5_o1_v02.xml
+        </parameter>
+    </processor>
+
+
+    <processor name="MycalculateTOF" type="calculateTOF">
+        <parameter name="tofOption" value="fit"/>
+        <parameter name="smearTime" value="0."/>
+    </processor>
+</marlin>
