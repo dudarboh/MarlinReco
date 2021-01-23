@@ -11,6 +11,9 @@
 #include "marlin/Processor.h"
 using marlin::Processor;
 
+#include "EVENT/Track.h"
+#include "EVENT/Cluster.h"
+
 #include <string>
 using std::string;
 
@@ -20,7 +23,6 @@ public:
     calculateTOF();
 
     Processor* newProcessor() {return new calculateTOF;}
-    void init();
     void processEvent(LCEvent* evt);
 
     const float* getMomAtCalo(const Track*);

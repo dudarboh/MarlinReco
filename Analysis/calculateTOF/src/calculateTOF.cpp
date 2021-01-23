@@ -9,10 +9,20 @@ using dd4hep::Detector;
 #include "DD4hep/DD4hepUnits.h"
 
 #include "Math/Vector3D.h"
+#include "TGraphErrors.h"
+#include "TF1.h"
 using namespace ROOT::Math;
 
+#include "CLHEP/Random/RandGauss.h"
+#include "HelixClass.h"
+#include "marlinutil/CalorimeterHitType.h"
+#include <UTIL/PIDHandler.h>
 
-#define SPEED_OF_LIGHT 299.792458;
+#include <vector>
+using std::vector;
+
+
+#define SPEED_OF_LIGHT 299.792458
 
 
 calculateTOF acalculateTOF;
@@ -24,15 +34,11 @@ calculateTOF::calculateTOF() : Processor("calculateTOF"){
 }
 
 
-void calculateTOF::init(){
-    std::default_random_engine generator;
-    std::normal_distribution <double> gaus(0.0, _smearTime);
-}
-
-
 void calculateTOF::processEvent(LCEvent* evt){
 
     LCCollection* colPFO = evt->getCollection("PandoraPFOs");
+    PIDHandler handler( colPFO );
+    int algoID = handler.addAlgorithm("TOFAlgorithm" , {"beta", "pAtCalo"});
 
     for (int i=0; i<colPFO->getNumberOfElements(); ++i){
         ReconstructedParticle* pfo = dynamic_cast <ReconstructedParticle*> ( colPFO->getElementAt(i) );
@@ -46,17 +52,23 @@ void calculateTOF::processEvent(LCEvent* evt){
         const Cluster* cluster = pfo->getClusters()[0];
 
         const float* pAtCalo = getMomAtCalo(track);
+        float pAbs = XYZVector(pAtCalo[0], pAtCalo[1], pAtCalo[2]).R();
         double trackLength = getTrackLength(track);
 
         double tof = -1.;
         if( _tofOption == "fit") tof = getTOFFit(track, cluster);
         else if( _tofOption == "closest") tof = getTOFClosest(track, cluster);
-        else throw string("Invalid tofOption parameter passed!!!\n Viable options are: fit, closest");
+        else {throw string("Invalid tofOption parameter passed!!!\n Viable options are: fit, closest");};
+
+        float beta = trackLength / (tof * SPEED_OF_LIGHT);
+        // Is there anything more pretty than this? Should I use PID to store this info?
+        const vector <float> result{beta, pAbs};
+        handler.setParticleID(pfo , 0, 0, 0., algoID, result);
     }
 }
 
 
-const float* getMomAtCalo(const Track* track){
+const float* calculateTOF::getMomAtCalo(const Track* track){
     const TrackState* ts = track->getTrackState(TrackState::AtCalorimeter);
     double phi = ts->getPhi();
     double d0 = ts->getD0();
@@ -74,7 +86,7 @@ const float* getMomAtCalo(const Track* track){
 }
 
 
-double getTrackLength(const Track* track){
+double calculateTOF::getTrackLength(const Track* track){
     const TrackState* ts = track->getTrackState(TrackState::AtIP);
     double phiIP = ts->getPhi();
     ts = track->getTrackState(TrackState::AtCalorimeter);
@@ -86,9 +98,10 @@ double getTrackLength(const Track* track){
 }
 
 
-double getTOFClosest(const Track* track, const Cluster* cluster){
+double calculateTOF::getTOFClosest(const Track* track, const Cluster* cluster){
     const TrackState* ts = track->getTrackState(TrackState::AtCalorimeter);
-    XYZVector trackAtCaloPos = XYZVector(ts->getReferencePoint());
+    const float* vec = ts->getReferencePoint();
+    XYZVector trackAtCaloPos = XYZVector(vec[0], vec[1], vec[2]);
 
     double dToImpactMin = 99999.;
     double hitTime = 0.;
@@ -97,7 +110,8 @@ double getTOFClosest(const Track* track, const Cluster* cluster){
         bool isEcal = (hitType.caloID() == CHT::ecal);
         if (!isEcal) continue;
 
-        XYZVector hitPos = XYZVector(hit->getPosition());
+        vec = hit->getPosition();
+        XYZVector hitPos = XYZVector(vec[0], vec[1], vec[2]);
         double dToImpact = (hitPos - trackAtCaloPos).R();
 
         if(dToImpact < dToImpactMin){
@@ -106,18 +120,20 @@ double getTOFClosest(const Track* track, const Cluster* cluster){
         }
     }
 
-    if (_smearTime > 0.) hitTime += gaus(generator);
-    return hitTime - dToImpactMin/SPEED_OF_LIGHT;
+    if (_smearTime > 0.) hitTime += CLHEP::RandGauss::shoot(0, _smearTime );
+    return hitTime - dToImpactMin / SPEED_OF_LIGHT;
 }
 
 
-double getTOFFit(const Track* track, const Cluster* cluster){
+double calculateTOF::getTOFFit(const Track* track, const Cluster* cluster){
     const TrackState* ts = track->getTrackState(TrackState::AtCalorimeter);
-    XYZVector trackAtCaloPos = XYZVector(ts->getReferencePoint());
-    XYZVector trackAtCaloMom = XYZVector(getMomAtCalo(track));
+    const float* vec = ts->getReferencePoint();
+    XYZVector trackAtCaloPos = XYZVector(vec[0], vec[1], vec[2]);
+    vec = getMomAtCalo(track);
+    XYZVector trackAtCaloMom = XYZVector(vec[0], vec[1], vec[2]);
 
-    int nLayers = 10;
-    double dToImact[nLayers] = {0.};
+    const int nLayers = 10;
+    double dToImpact[nLayers] = {0.};
     double hitTime[nLayers] = {0.};
     double dToLineMin[nLayers];
     for(int i=0; i<nLayers; ++i) dToLineMin[i] = 99999.;
@@ -128,8 +144,9 @@ double getTOFFit(const Track* track, const Cluster* cluster){
         int layer = hitType.layer();
         if (!isEcal || layer >= nLayers) continue;
 
-        XYZVector hitPos = XYZVector(hit->getPosition());
-        double dToLine = (hitPos - trackAtCaloPos).Cross(trackAtCaloMom.Unit()).R()
+        vec = hit->getPosition();
+        XYZVector hitPos = XYZVector(vec[0], vec[1], vec[2]);
+        double dToLine = (hitPos - trackAtCaloPos).Cross(trackAtCaloMom.Unit()).R();
         if( dToLine < dToLineMin[layer] ){
             dToLineMin[layer] = dToLine;
             dToImpact[layer] = (hitPos - trackAtCaloPos).R();
@@ -141,15 +158,17 @@ double getTOFFit(const Track* track, const Cluster* cluster){
     double timeError = sqrt(0.01*0.01 + _smearTime*_smearTime);
 
     for(int i=0; i<nLayers; ++i){
-        if (_smearTime > 0.) hitTime[i] += gaus(generator);
-        if (hitTime <= 0.) continue;
+        if (_smearTime > 0.) hitTime[i] += CLHEP::RandGauss::shoot(0, _smearTime );
+        if (hitTime[i] <= 0.) continue;
         x.push_back(dToImpact[i]);
         xErr.push_back(0.);
         y.push_back(hitTime[i]);
         yErr.push_back(timeError); // error bars for time are item for discussion
     }
 
-    TGraphErrors gr(x.size(), x, y, xErr, yErr);
+    if (x.size() <= 1) return 0.;
+
+    TGraphErrors gr(x.size(), &x[0], &y[0], &xErr[0], &yErr[0]);
     gr.Fit("pol1", "Q");
 
     return gr.GetFunction("pol1")->GetParameter(0);
